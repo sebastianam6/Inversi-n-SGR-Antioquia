@@ -378,6 +378,62 @@ body{font-family:'Helvetica Neue',Arial,sans-serif;}
 .muni-chip-link{cursor:pointer;}
 .muni-chip-link:hover{background:var(--verde);color:#FFFFFF;border-left-color:var(--oro);}
 
+.filter-chips{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  padding:18px 20px;
+  border-bottom:1px solid var(--gris-borde);
+}
+.filter-chip{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:7px 14px;
+  border:1.5px solid var(--gris-borde);
+  background:var(--blanco);
+  font-size:0.82rem;
+  font-weight:600;
+  color:var(--gris-texto);
+  cursor:pointer;
+  transition:all 0.12s ease;
+}
+.filter-chip .dot{
+  width:9px;height:9px;border-radius:50%;flex-shrink:0;
+}
+.filter-chip:hover{border-color:var(--verde);}
+.filter-chip.active{
+  background:var(--verde-oscuro);
+  border-color:var(--verde-oscuro);
+  color:var(--blanco);
+}
+.filter-chip.active .dot{
+  box-shadow:0 0 0 2px rgba(255,255,255,0.5);
+}
+.filter-empty-state{
+  padding:30px 20px;
+  text-align:center;
+  color:var(--gris-suave);
+  font-size:0.85rem;
+}
+.filter-summary{
+  padding:14px 20px;
+  border-bottom:1px solid var(--gris-borde);
+  background:var(--gris-fondo);
+  font-size:0.82rem;
+  color:var(--gris-texto);
+  display:flex;
+  justify-content:space-between;
+  align-items:baseline;
+  flex-wrap:wrap;
+  gap:6px;
+}
+.filter-summary .fs-total{
+  font-weight:700;
+  color:var(--verde-oscuro);
+  font-size:0.95rem;
+}
+
 .regional-badge{
   display:inline-block;
   font-size:0.66rem;
@@ -520,22 +576,11 @@ body{font-family:'Helvetica Neue',Arial,sans-serif;}
 <section class="special-section">
   <div class="panel" style="margin-bottom:20px;">
     <div class="panel-header">
-      <h2>Proyectos regionales (multi-municipio)</h2>
-      <span class="panel-note">Inversión compartida entre dos o más municipios</span>
+      <h2>Filtrar proyectos por fuente de financiación</h2>
+      <span class="panel-note">Selecciona una fuente para ver sus proyectos y resaltarlos en el mapa</span>
     </div>
-    <div style="overflow-x:auto;">
-      <table class="special-table" id="regionalTable">
-        <thead>
-          <tr>
-            <th>Municipios que conecta</th>
-            <th>Descripción del proyecto</th>
-            <th>Fuente</th>
-            <th style="text-align:right;">Valor</th>
-          </tr>
-        </thead>
-        <tbody id="regionalBody"></tbody>
-      </table>
-    </div>
+    <div class="filter-chips" id="filterChips"></div>
+    <div id="filterResults"></div>
   </div>
 
   <div class="panel">
@@ -761,6 +806,49 @@ function showMunicipio(name){
 // ============================================================
 // BLOQUE 3: Mapa Leaflet
 // ============================================================
+let activeFuenteFilter = null; // null = sin filtro, string = nombre de fuente activa
+let mapGetColor = null;
+
+function municipioTieneFuente(name, fuente){
+  const muni = DATA.municipios[name];
+  if (!muni) return false;
+  if (muni.fuentes && muni.fuentes[fuente] > 0) return true;
+  return (muni.proyectos||[]).some(p => p.fuentes && p.fuentes[fuente] > 0);
+}
+
+function montoMunicipioPorFuente(name, fuente){
+  const muni = DATA.municipios[name];
+  if (!muni) return 0;
+  return (muni.proyectos||[]).reduce((s,p) => s + (p.fuentes && p.fuentes[fuente] ? p.fuentes[fuente] : 0), 0);
+}
+
+function styleFeatureForMuni(name){
+  const muni = DATA.municipios[name];
+  if (activeFuenteFilter){
+    if (municipioTieneFuente(name, activeFuenteFilter)){
+      return { fillColor: '#007749', weight: 1, color: '#FFFFFF', fillOpacity: 1 };
+    }
+    return { fillColor: '#EDEFEB', weight: 1, color: '#FFFFFF', fillOpacity: 0.6 };
+  }
+  if (muni && muni.total > 0 && mapGetColor){
+    return { fillColor: mapGetColor(muni.total), weight: 1, color: '#FFFFFF', fillOpacity: 1 };
+  }
+  if (muni && muni.total === 0 && muni.num_proyectos_regionales > 0){
+    return { fillColor: '#FFFFFF', weight: 1.5, color: '#C9A100', fillOpacity: 1, dashArray:'3,3' };
+  }
+  return { fillColor: '#EDEFEB', weight: 1, color: '#FFFFFF', fillOpacity: 1 };
+}
+
+function applyFuenteFilterToMap(fuente){
+  activeFuenteFilter = fuente;
+  if (!geoLayer) return;
+  activeLayer = null;
+  geoLayer.eachLayer(layer => {
+    const name = layer.feature.properties.MPIO_CNMBR;
+    layer.setStyle(styleFeatureForMuni(name));
+  });
+}
+
 function renderMap(){
   map = L.map('map', {scrollWheelZoom:false}).setView([6.6, -75.3], 7.6);
 
@@ -768,7 +856,7 @@ function renderMap(){
   const maxVal = Math.max(...muniValues);
   const minVal = Math.min(...muniValues);
 
-  function getColor(value){
+  mapGetColor = function(value){
     const t = (value - minVal) / (maxVal - minVal || 1);
     if (t < 0.001) return 'rgb(207,227,214)';
     const stops = [
@@ -787,27 +875,25 @@ function renderMap(){
     const g = Math.round(c0.c[1] + (c1.c[1]-c0.c[1])*lt);
     const b = Math.round(c0.c[2] + (c1.c[2]-c0.c[2])*lt);
     return `rgb(${r},${g},${b})`;
-  }
+  };
 
   function styleFeature(feature){
-    const name = feature.properties.MPIO_CNMBR;
-    const muni = DATA.municipios[name];
-    if (muni && muni.total > 0){
-      return { fillColor: getColor(muni.total), weight: 1, color: '#FFFFFF', fillOpacity: 1 };
-    }
-    if (muni && muni.total === 0 && muni.num_proyectos_regionales > 0){
-      return { fillColor: '#FFFFFF', weight: 1.5, color: '#C9A100', fillOpacity: 1, dashArray:'3,3' };
-    }
-    return { fillColor: '#EDEFEB', weight: 1, color: '#FFFFFF', fillOpacity: 1 };
+    return styleFeatureForMuni(feature.properties.MPIO_CNMBR);
   }
 
   function onEachFeature(feature, layer){
     const name = feature.properties.MPIO_CNMBR;
-    const muni = DATA.municipios[name];
     layer.on('mouseover', function(){
       if (layer !== activeLayer) layer.setStyle({weight:2, color:'#C9A100'});
+      const muni = DATA.municipios[name];
       let tip;
-      if (muni && muni.total > 0) {
+      if (activeFuenteFilter){
+        if (municipioTieneFuente(name, activeFuenteFilter)){
+          tip = `<strong>${name}</strong><br>${activeFuenteFilter}: ${fmtCOP(montoMunicipioPorFuente(name, activeFuenteFilter))}`;
+        } else {
+          tip = `<strong>${name}</strong><br>Sin proyectos de esta fuente`;
+        }
+      } else if (muni && muni.total > 0) {
         tip = `<strong>${name}</strong><br>${fmtCOP(muni.total)}`;
         if (muni.num_proyectos_regionales > 0) tip += ` <span style="color:#C9A100;">+ proyectos regionales</span>`;
       } else if (muni && muni.num_proyectos_regionales > 0) {
@@ -830,7 +916,20 @@ function renderMap(){
   geoLayer = L.geoJSON(GEO, { style: styleFeature, onEachFeature: onEachFeature }).addTo(map);
   map.fitBounds(geoLayer.getBounds(), {padding:[10,10]});
 
+  renderMapLegend();
+}
+
+function renderMapLegend(){
   const mapLegend = document.getElementById('mapLegend');
+  if (activeFuenteFilter){
+    mapLegend.innerHTML = `
+      <span>Sin proyectos de esta fuente</span>
+      <span class="legend-scale"><span class="legend-swatch" style="background:#EDEFEB;"></span></span>
+      <span style="margin-left:10px;">Con proyectos de "${activeFuenteFilter}"</span>
+      <span class="legend-scale"><span class="legend-swatch" style="background:#007749;"></span></span>
+    `;
+    return;
+  }
   mapLegend.innerHTML = `
     <span>Sin datos</span>
     <span class="legend-scale"><span class="legend-swatch" style="background:#EDEFEB;"></span></span>
@@ -945,24 +1044,129 @@ function renderRanking(){
 }
 
 // ============================================================
-// BLOQUE 7: Tabla de proyectos regionales (multi-municipio)
+// BLOQUE 7: Filtro de proyectos por fuente de financiación
 // ============================================================
-function renderRegionalTable(){
-  const regionalBody = document.getElementById('regionalBody');
-  const regionalSorted = [...DATA.proyectos_regionales].sort((a,b)=>b.total - a.total);
-  regionalBody.innerHTML = regionalSorted.map(p => `
+function getProyectosPorFuente(fuente){
+  const resultados = [];
+
+  // Proyectos directos y regionales de cada municipio (cada municipio "dueño" de su entrada)
+  Object.entries(DATA.municipios).forEach(([nombreMuni, muni]) => {
+    (muni.proyectos||[]).forEach(p => {
+      if (!p.fuentes || !(p.fuentes[fuente] > 0)) return;
+      if (p.es_regional) {
+        // Evitar duplicar: solo registrar el proyecto regional una vez (cuando el municipio es el primero de la lista compartida)
+        const compartidos = p.municipios_compartidos || [];
+        if (compartidos.length && compartidos[0] !== nombreMuni) return;
+        resultados.push({
+          tipo: 'regional',
+          municipios: compartidos.length ? compartidos : [nombreMuni],
+          descripcion: p.descripcion.replace(/\s*\(proyecto regional:.*\)/,''),
+          valor: p.fuentes[fuente]
+        });
+      } else {
+        resultados.push({
+          tipo: 'directo',
+          municipios: [nombreMuni],
+          descripcion: p.descripcion,
+          valor: p.fuentes[fuente]
+        });
+      }
+    });
+  });
+
+  // Proyectos sectoriales
+  DATA.proyectos_sectoriales.forEach(p => {
+    if (p.fuentes && p.fuentes[fuente] > 0) {
+      resultados.push({
+        tipo: 'sectorial',
+        municipios: [p.nombre_registro],
+        descripcion: p.descripcion,
+        valor: p.fuentes[fuente]
+      });
+    }
+  });
+
+  return resultados.sort((a,b) => b.valor - a.valor);
+}
+
+function renderFilterResults(fuente){
+  const container = document.getElementById('filterResults');
+  if (!fuente){
+    container.innerHTML = `<div class="filter-empty-state">Selecciona una fuente de financiación arriba para ver sus proyectos.</div>`;
+    return;
+  }
+  const proyectos = getProyectosPorFuente(fuente);
+  const total = proyectos.reduce((s,p)=>s+p.valor,0);
+  const municipiosUnicos = new Set();
+  proyectos.forEach(p => p.municipios.forEach(m => municipiosUnicos.add(m)));
+
+  if (!proyectos.length){
+    container.innerHTML = `<div class="filter-empty-state">No hay proyectos registrados con la fuente "${fuente}".</div>`;
+    return;
+  }
+
+  const rows = proyectos.map(p => `
     <tr>
-      <td>${p.municipios_incluidos.map(m => `<span class="muni-chip muni-chip-link" data-name="${m}">${m}</span>`).join('')}</td>
-      <td>${p.descripcion}</td>
-      <td class="sp-fuente">${Object.keys(p.fuentes).join(', ')}</td>
-      <td class="sp-valor">${fmtCOPFull(p.total)}</td>
+      <td>${p.municipios.map(m => `<span class="muni-chip muni-chip-link" data-name="${m}">${m}</span>`).join('')}</td>
+      <td>${p.descripcion}${p.tipo==='regional' ? '<span class="regional-badge">Regional</span>' : ''}${p.tipo==='sectorial' ? '<span class="regional-badge" style="background:#8C8158;color:#fff;">Sectorial</span>' : ''}</td>
+      <td class="sp-valor">${fmtCOPFull(p.valor)}</td>
     </tr>
   `).join('');
 
-  regionalBody.addEventListener('click', (e) => {
-    const chip = e.target.closest('.muni-chip-link');
+  container.innerHTML = `
+    <div class="filter-summary">
+      <span>${proyectos.length} proyecto${proyectos.length>1?'s':''} · ${municipiosUnicos.size} municipio${municipiosUnicos.size>1?'s':''} con esta fuente</span>
+      <span class="fs-total">${fmtCOPFull(total)}</span>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="special-table">
+        <thead><tr><th>Municipio(s)</th><th>Descripción del proyecto</th><th style="text-align:right;">Valor (esta fuente)</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderSourceFilter(){
+  const chipsContainer = document.getElementById('filterChips');
+  const fuentes = DATA.fuente_labels;
+
+  chipsContainer.innerHTML = fuentes.map(f => `
+    <div class="filter-chip" data-fuente="${f}">
+      <span class="dot" style="background:${FUENTE_COLORS[f]||'#007749'};"></span>
+      ${f}
+    </div>
+  `).join('');
+
+  renderFilterResults(null);
+
+  chipsContainer.addEventListener('click', (e) => {
+    const chip = e.target.closest('.filter-chip');
     if (!chip) return;
-    selectMunicipio(chip.dataset.name, {panToMap:true, scrollToMap:true});
+    const fuente = chip.dataset.fuente;
+    const isActive = chip.classList.contains('active');
+
+    chipsContainer.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+
+    if (isActive){
+      // Toggle off
+      renderFilterResults(null);
+      applyFuenteFilterToMap(null);
+      renderMapLegend();
+    } else {
+      chip.classList.add('active');
+      renderFilterResults(fuente);
+      applyFuenteFilterToMap(fuente);
+      renderMapLegend();
+    }
+  });
+
+  document.getElementById('filterResults').addEventListener('click', (e) => {
+    const chipLink = e.target.closest('.muni-chip-link');
+    if (!chipLink) return;
+    const name = chipLink.dataset.name;
+    if (!DATA.municipios[name]) return; // ignora chips de registros no-municipio (sectoriales)
+    selectMunicipio(name, {panToMap:true, scrollToMap:true});
   });
 }
 
@@ -992,7 +1196,7 @@ const blocks = [
   ['Buscador', renderSearch],
   ['Gráfico de fuentes', renderDonut],
   ['Ranking', renderRanking],
-  ['Tabla regional', renderRegionalTable],
+  ['Filtro por fuente', renderSourceFilter],
   ['Tabla sectorial', renderSectorialTable]
 ];
 
